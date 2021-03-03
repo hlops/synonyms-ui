@@ -38,7 +38,7 @@ export class WordConverter {
       wordData.results,
       (result) => {
         const inner: WordDatum = {
-          name: result.definition.substr(0, 20),
+          name: result.definition,
         };
         const value = _.concat(result.synonyms, result.also, result.antonyms);
         inner.children = _.compact(
