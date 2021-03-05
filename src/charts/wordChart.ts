@@ -1,30 +1,66 @@
 import type { HierarchyNode, HierarchyRectangularNode } from "d3";
 import * as d3 from "d3";
 import _ from "lodash";
+import { WordUtils } from "../data/wordUtils";
 import { GenericChart } from "./genericChart";
 import type { WordDatum } from "./wordConverter";
-import { WordUtils } from "./wordUtils";
 
 export class WorldChart extends GenericChart<WordDatum> {
   private radius = this.width / 6;
+  private angle = 0;
+  private root: HierarchyRectangularNode<WordDatum>;
+
+  constructor(containerId: string, width?: number, height?: number) {
+    super(containerId, width, height);
+    this.svg.on("wheel", (event) => {
+      this.angle = (this.angle - Math.sign(event.wheelDelta) * 10) % 360;
+      if (this.angle < 0) {
+        this.angle = 360 + this.angle;
+      }
+
+      this.svg
+        .transition("easeElastic")
+        .attr("transform", `rotate(${-this.angle})`);
+      //this.topGroup.selectAll("text").call((sel) => this.transformLabels(sel as any));
+
+      this.transformLabels(
+        this.topGroup
+          .transition("easeElastic")
+          .selectAll<d3.BaseType, TextChunk>("text")
+      );
+    });
+  }
 
   public draw(datum: WordDatum): void {
-    const root = WorldChart.buildPartition(datum);
+    this.root = WorldChart.buildPartition(datum);
 
     const path = this.topGroup
       .append("g")
       .selectAll("path")
-      .data(root.descendants())
+      .data(this.root.descendants())
       .join("path")
       .attr("fill", (d) => {
-        while (d.depth > 1) d = d.parent;
-        return WorldChart.color(d, d.data.name);
+        return WorldChart.color(d);
       })
       .attr("fill-opacity", (d) =>
         WorldChart.arcVisible(d) ? (d.children ? 0.6 : 0.4) : 0
       )
       .attr("d", (d) => this.arc(d));
-    this.showLabel(root);
+
+    path
+//      .filter((d) => !!d.children)
+      .style("cursor", "pointer")
+      .on("click", (event, p) => this.clicked(event, p));
+
+    this.drawLabel(this.root);
+
+    const parent = this.topGroup
+      .append("circle")
+      .datum(this.root)
+      .attr("r", this.radius)
+      .attr("fill", "none")
+      .attr("pointer-events", "all")
+      .on("click", (event, p) => this.clicked(event, p));
   }
 
   public redraw(datum: WordDatum): void {
@@ -48,7 +84,7 @@ export class WorldChart extends GenericChart<WordDatum> {
   private static arcVisible(
     node: HierarchyRectangularNode<WordDatum>
   ): boolean {
-    return node.y1 <= 3 && node.y0 >= 1 && node.x1 > node.x0;
+    return node.y1 <= 3 && node.x1 > node.x0;
   }
 
   private arc(node: HierarchyRectangularNode<WordDatum>) {
@@ -68,7 +104,7 @@ export class WorldChart extends GenericChart<WordDatum> {
     return d.y1 <= 3 && (d.y1 - d.y0) * (d.x1 - d.x0) > 0.03;
   }
 
-  private showLabel(root: HierarchyRectangularNode<WordDatum>): void {
+  private drawLabel(root: HierarchyRectangularNode<WordDatum>): void {
     const tr = (d) => {
       if (d.depth > 0) {
         const x = (((d.x0 + d.x1) / 2) * 180) / Math.PI;
@@ -89,35 +125,52 @@ export class WorldChart extends GenericChart<WordDatum> {
       .attr("transform", (d) => tr(d))
       .selectAll("text")
       .data((d) => TextChunk.createFromNode(d))
-      .join("text");
-
-    textGroup
-      .filter((d) => d.count > 1)
-      .attr("text-anchor", (d) => (d.isReverted ? "center" : "center"))
-      .attr("transform", (d) =>
-        d.isReverted
-          ? `rotate(180) translate(${Math.abs(d.dy)*2} , ${d.dy * 20 + 4}) rotate(${-d.dy * 5})`
-          : `translate(${- Math.abs(d.dy)*2}, ${d.dy * 20 + 4}) rotate(${d.dy * 5})`
-      )
+      .join("text")
       .text((d) => {
         return d.text;
-      });
-    textGroup
-      .filter((d) => d.count === 1)
-      .attr("transform", (d) => (d.isReverted ? "rotate(180)" : ""))
-      .text((d) => {
-        return d.text;
-      });
+      })
+      .attr("alignment-baseline", "central");
+    this.transformLabels(textGroup);
   }
 
-  private static color(data: HierarchyNode<WordDatum>, name: string) {
-    return d3.scaleOrdinal(
-      d3.quantize(
-        d3.interpolateRainbow,
-        data.children ? data.children.length + 2 : 1
-      ),
-      ["red", "orange", "yellow", "green", "blue"]
-    )(name);
+  private transformLabels(
+    sel:
+      | d3.Selection<d3.BaseType, TextChunk, any, any>
+      | d3.Transition<d3.BaseType, TextChunk, any, any>
+  ): void {
+    sel
+      .filter((d) => d.isRoot)
+      .attr("transform", (d) => `rotate(${this.angle})`);
+    sel
+      .filter((d) => !d.isRoot && d.count > 1)
+      .attr("text-anchor", "center")
+      .attr("transform", (d) => {
+        const sign = d.isTurnover(this.angle) ? -1 : 1;
+        return `rotate(${d.isTurnover(this.angle) ? 180 : 0}) translate(${
+          sign * Math.abs(d.dy) * 2
+        }, ${d.dy * 20}) rotate(${sign * d.dy * 6})`;
+      });
+    sel
+      .filter((d) => !d.isRoot && d.count === 1)
+      .attr("transform", (d) =>
+        d.isTurnover(this.angle) ? "rotate(180)" : ""
+      );
+  }
+
+  private static color(data: HierarchyNode<WordDatum>) {
+    if (data.depth == 0) {
+      return "orange";
+    } else if (data.depth == 1) {
+      return "green";
+    } else {
+      const v = (data.value - 2.5) / 2;
+      return d3.interpolateRgb("white", "green")(v > 1 ? 1 : v);
+    }
+  }
+
+  private clicked(event: any, p: HierarchyRectangularNode<WordDatum>) {
+    console.log(p);
+    this.draw(p.data)
   }
 }
 
@@ -130,10 +183,16 @@ class TextChunk {
     if (lines.length > maxLineWidth) {
       lines.length = maxLineWidth;
     }
-    const x = (((node.x0 + node.x1) / 2) * 180) / Math.PI;
     return _.map(
       lines,
-      (text, i) => new TextChunk(text, i, lines.length, x > 180)
+      (text, i) =>
+        new TextChunk(
+          text,
+          i,
+          lines.length,
+          (((node.x0 + node.x1) / 2) * 180) / Math.PI,
+          node.depth === 0
+        )
     );
   }
 
@@ -141,11 +200,20 @@ class TextChunk {
     public readonly text: string,
     public readonly pos: number,
     public readonly count: number,
-    public isReverted: boolean
+    private readonly x: number,
+    public readonly isRoot: boolean
   ) {
     if (!count) {
       this.count = 1;
     }
+  }
+
+  public isTurnover(angle: number): boolean {
+    let value = (this.x - angle) % 360;
+    if (value < 0) {
+      value = 360 + value;
+    }
+    return value > 180;
   }
 
   public get dy(): number {

@@ -1,4 +1,4 @@
-import { WordUtils } from "../../src/charts/wordUtils";
+import { WordUtils } from "../../src/data/wordUtils";
 
 describe("WordUtils", () => {
   describe("should split text by lines with length", () => {

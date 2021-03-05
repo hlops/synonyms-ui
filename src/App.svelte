@@ -1,23 +1,24 @@
 <script lang="ts">
+    import _ from "lodash";
     import { onMount } from "svelte";
     import { WorldChart } from "./charts/wordChart";
     import { WordConverter } from "./charts/wordConverter";
+    import { getWords } from "./data/store";
+    import type { ResultOptions } from "./data/wordUtils";
 
     onMount(async () => {
         const worldChart = new WorldChart('.d3-container');
 
-
-        //worldChart.draw(data1.default);
-
-        await fetch(`http://localhost:8080/word/attack`)
-            .then(r => r.json())
-            .then(data => {
-                const datum = WordConverter.toDatum(data);
-                worldChart.draw(datum);
-                setTimeout(() => {
-                    datum.children[1].children[1].value = 100;
-                    worldChart.redraw(datum);
-                }, 1000)
+        const options: ResultOptions = {synonyms: true, similarTo: true, also: true};
+        await getWords('known', options)
+            .then(([data, ...promises]) => {
+                Promise.all(promises).then(words => {
+                    const datum = WordConverter.toDatum(data, _.reduce(words, (result, w) => {
+                        result[w.word] = w.frequency;
+                        return result
+                    }, {}), options);
+                    worldChart.draw(datum);
+                })
             });
     })
 
